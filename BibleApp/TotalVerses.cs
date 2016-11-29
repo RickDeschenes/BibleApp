@@ -21,5 +21,12 @@ namespace AnotherBibleApp
         {
             BibleDetails bd = new BibleDetails();
         }
+
+        private void bProcess_Click(object sender, EventArgs e)
+        {
+            progressBar1.Maximum = 80;
+
+
+        }
     }
 }

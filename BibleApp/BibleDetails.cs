@@ -12,6 +12,9 @@ namespace AnotherBibleApp
 {
     class BibleDetails
     {
+        // Declare the event using EventHandler<T>
+        public event EventHandler<CustomEventArgs> RaiseCustomEvent;
+
         private BibleBooks[] Bibles;
         private BibleBooks Books;
         private mVersions _versions;
@@ -39,6 +42,7 @@ namespace AnotherBibleApp
                 Bibles[i] = LoadBooks(version);
                 _versions.name = version;
                 Versions[i] = _versions;
+                Debug.Write(Versions[i].Books);
                 i += 1;
             }
         }
@@ -57,33 +61,46 @@ namespace AnotherBibleApp
                 if (bk.StartsWith("Song of Solomon"))
                     bk = book.Replace("Song of Solomon", "song");
                 string getbook = "https://api.biblia.com/v1/bible/content/" + Version + ".txt?style=oneVersePerLineFullReference&passage=" + bk.Replace(" ", "") + "&" + key;
-                string contents = ReadXml(getbook);
+                List<string> contents = ReadXml(getbook).Split("\r\n".ToCharArray(), StringSplitOptions.RemoveEmptyEntries).ToList<string>();
 
                 //split it up
-
-
-                //fill our object
-
                 c = 0;
                 foreach (string chapter in bible.lChapters)
                 {
-                    string cr = chapter;
-                    if (cr.StartsWith("Song of Solomon"))
-                        cr = chapter.Replace("Song of Solomon", "song");
-                    string query = "https://api.biblia.com/v1/bible/content/" + Version + ".txt?style=oneVersePerLineFullReference&passage=" + cr.Replace(" ", "") + "&" + key;
-                    string results = ReadXml(query);
-                    //Debug.WriteLine(xml);
                     //Count the new lines
-                    string[] verses = results.Split("\r\n".ToCharArray(), StringSplitOptions.RemoveEmptyEntries);
+                    int verses = contents.FindAll(s => s.StartsWith(chapter + ":")).Count;
                     //Debug.Print("Found {0} verses", verses.Length);
                     Chapters[c] = new mChapters();
                     Chapters[c].Chapter = c;
-                    Chapters[c].Verses = verses.Length;
+                    Chapters[c].Verses = verses;
                     c += 1;
                 }
+
+                //fill our object
+
+                //c = 0;
+                //foreach (string chapter in bible.lChapters)
+                //{
+                //    string cr = chapter;
+                //    if (cr.StartsWith("Song of Solomon"))
+                //        cr = chapter.Replace("Song of Solomon", "song");
+                //    string query = "https://api.biblia.com/v1/bible/content/" + Version + ".txt?style=oneVersePerLineFullReference&passage=" + cr.Replace(" ", "") + "&" + key;
+                //    string results = ReadXml(query);
+                //    //Debug.WriteLine(xml);
+                //    //Count the new lines
+                //    string[] verses = results.Split("\r\n".ToCharArray(), StringSplitOptions.RemoveEmptyEntries);
+                //    //Debug.Print("Found {0} verses", verses.Length);
+                //    Chapters[c] = new mChapters();
+                //    Chapters[c].Chapter = c;
+                //    Chapters[c].Verses = verses.Length;
+                //    c += 1;
+                //}
                 _versions.Books[b] = new mBooks();
                 _versions.Books[b].Name = book;
                 _versions.Books[b].Chapters = Chapters;
+
+                //raise an event
+                OnRaiseCustomEvent(new CustomEventArgs("Processing book " + b + " of " + bible.lBooks.Count));
                 b += 1;
             }
         }
@@ -183,6 +200,42 @@ namespace AnotherBibleApp
             float result;
             float.TryParse(String.Concat(sb.ToString().ToCharArray().Reverse()), out result);
             return result;
+        }
+
+        // Wrap event invocations inside a protected virtual method
+        // to allow derived classes to override the event invocation behavior
+        protected virtual void OnRaiseCustomEvent(CustomEventArgs e)
+        {
+            // Make a temporary copy of the event to avoid possibility of
+            // a race condition if the last subscriber unsubscribes
+            // immediately after the null check and before the event is raised.
+            EventHandler<CustomEventArgs> handler = RaiseCustomEvent;
+
+            // Event will be null if there are no subscribers
+            if (handler != null)
+            {
+                // Format the string to send inside the CustomEventArgs parameter
+                e.Message += String.Format(" at {0}", DateTime.Now.ToString());
+
+                // Use the () operator to raise the event.
+                handler(this, e);
+            }
+        }
+    }
+
+    // Define a class to hold custom event info
+    public class CustomEventArgs : EventArgs
+    {
+        public CustomEventArgs(string s)
+        {
+            message = s;
+        }
+        private string message;
+
+        public string Message
+        {
+            get { return message; }
+            set { message = value; }
         }
     }
 

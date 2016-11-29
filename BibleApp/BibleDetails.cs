@@ -4,21 +4,29 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
+using System.Xml.Serialization;
 
 namespace AnotherBibleApp
 {
-    class BibleDetails
+    public delegate void MyDelegate(string Message, int Count, int Max);
+    public delegate void MyCompleted();
+
+    public class BibleDetails
     {
-        // Declare the event using EventHandler<T>
-        public event EventHandler<CustomEventArgs> RaiseCustomEvent;
+        public event MyDelegate VersionUpdate;
+        public event MyDelegate BookUpdate;
+        public event MyDelegate ChapterUpdate;
+
+        public event MyCompleted Completed;
 
         private BibleBooks[] Bibles;
         private BibleBooks Books;
-        private mVersions _versions;
-        private mVersions[] Versions;
+        private mVersion _versions;
+        private mVersion[] Versions;
 
         private const string key = "key=adbcd6d6ae712cfe5e1657757b010c4c";
 
@@ -26,25 +34,51 @@ namespace AnotherBibleApp
         private List<string> lBooks;
         private List<string> lChapters;
 
+        public string TableofContentsXml { get; internal set; }
+        public string TableofContentsJson { get; internal set; }
+
         public BibleDetails()
+        {
+        }
+
+        internal void ProcessDetails()
         {
             LoadBibles();
             LoadAllBibles();
+            LoadTableofContentsXml();
+            LoadTableofContentsJson();
+        }
+
+        private void LoadTableofContentsXml()
+        {
+            mVersions versions = new mVersions();
+            versions.Vesions = Versions;
+            TableofContentsXml = SerializeObject(versions);
+        }
+
+        private void LoadTableofContentsJson()
+        {
+            mVersions versions = new mVersions();
+            versions.Vesions = Versions;
+            TableofContentsJson = Serialize<mVersions>(versions);
         }
 
         private void LoadAllBibles()
         {
-            int i = 0;
-            Versions = new mVersions[lVersions.Count];
+            int v = 0;
+            Versions = new mVersion[lVersions.Count];
             foreach (string version in lVersions)
             {
-                _versions = new mVersions();
-                Bibles[i] = LoadBooks(version);
+                //raise an event
+                VersionUpdate("Processing " + version + ": version " + v + " of " + lVersions.Count, v, lVersions.Count);
+                _versions = new mVersion();
+                Bibles[v] = LoadBooks(version);
                 _versions.name = version;
-                Versions[i] = _versions;
-                Debug.Write(Versions[i].Books);
-                i += 1;
+                Versions[v] = _versions;
+                Debug.Write(Versions[v].Books);
+                v += 1;
             }
+            Completed();
         }
 
         private void LoadChapters(string Version, BibleBooks bible)
@@ -53,6 +87,9 @@ namespace AnotherBibleApp
             foreach (string book in bible.lBooks)
             {
                 int c = 0;
+                //raise an event
+                BookUpdate("Processing " + book + ": book " + b + " of " + bible.lBooks.Count, b, bible.lBooks.Count);
+
                 bible.LoadBibleBooks(book);
                 mChapters[] Chapters = new mChapters[bible.lChapters.Count];
 
@@ -60,6 +97,8 @@ namespace AnotherBibleApp
                 string bk = book;
                 if (bk.StartsWith("Song of Solomon"))
                     bk = book.Replace("Song of Solomon", "song");
+                else if (bk.StartsWith("Wisdom of Solomon"))
+                    bk = book.Replace("Wisdom of Solomon", "wisdom");
                 string getbook = "https://api.biblia.com/v1/bible/content/" + Version + ".txt?style=oneVersePerLineFullReference&passage=" + bk.Replace(" ", "") + "&" + key;
                 List<string> contents = ReadXml(getbook).Split("\r\n".ToCharArray(), StringSplitOptions.RemoveEmptyEntries).ToList<string>();
 
@@ -74,33 +113,16 @@ namespace AnotherBibleApp
                     Chapters[c].Chapter = c;
                     Chapters[c].Verses = verses;
                     c += 1;
+
+                    //raise an event
+                    ChapterUpdate("Processing " + chapter + ": chapter " + c + " of " + bible.lChapters.Count, c, bible.lChapters.Count);
+
                 }
 
-                //fill our object
-
-                //c = 0;
-                //foreach (string chapter in bible.lChapters)
-                //{
-                //    string cr = chapter;
-                //    if (cr.StartsWith("Song of Solomon"))
-                //        cr = chapter.Replace("Song of Solomon", "song");
-                //    string query = "https://api.biblia.com/v1/bible/content/" + Version + ".txt?style=oneVersePerLineFullReference&passage=" + cr.Replace(" ", "") + "&" + key;
-                //    string results = ReadXml(query);
-                //    //Debug.WriteLine(xml);
-                //    //Count the new lines
-                //    string[] verses = results.Split("\r\n".ToCharArray(), StringSplitOptions.RemoveEmptyEntries);
-                //    //Debug.Print("Found {0} verses", verses.Length);
-                //    Chapters[c] = new mChapters();
-                //    Chapters[c].Chapter = c;
-                //    Chapters[c].Verses = verses.Length;
-                //    c += 1;
-                //}
                 _versions.Books[b] = new mBooks();
                 _versions.Books[b].Name = book;
                 _versions.Books[b].Chapters = Chapters;
 
-                //raise an event
-                OnRaiseCustomEvent(new CustomEventArgs("Processing book " + b + " of " + bible.lBooks.Count));
                 b += 1;
             }
         }
@@ -121,7 +143,7 @@ namespace AnotherBibleApp
             _versions.name = version;
             _versions.Books = new mBooks[Books.lBooks.Count];
             LoadChapters(version, Books);
-
+            
             return Books;
         }
 
@@ -160,10 +182,17 @@ namespace AnotherBibleApp
             WebResponse response;
             StreamReader reader;
 
-            response = request.GetResponse();
-            dataStream = response.GetResponseStream();
-            reader = new StreamReader(dataStream);
-            results = reader.ReadToEnd();
+            try
+            {
+                response = request.GetResponse();
+                dataStream = response.GetResponseStream();
+                reader = new StreamReader(dataStream);
+                results = reader.ReadToEnd();
+            }
+            catch (Exception ex)
+            {
+                Debug.Print("Error processing " + webquery + ". Error: " + ex);
+            }
 
             return results;
         }
@@ -202,64 +231,108 @@ namespace AnotherBibleApp
             return result;
         }
 
-        // Wrap event invocations inside a protected virtual method
-        // to allow derived classes to override the event invocation behavior
-        protected virtual void OnRaiseCustomEvent(CustomEventArgs e)
+        public static mVersions DeserializeObject<mVersions>(string xml)
         {
-            // Make a temporary copy of the event to avoid possibility of
-            // a race condition if the last subscriber unsubscribes
-            // immediately after the null check and before the event is raised.
-            EventHandler<CustomEventArgs> handler = RaiseCustomEvent;
-
-            // Event will be null if there are no subscribers
-            if (handler != null)
+            using (MemoryStream ms = new MemoryStream(Encoding.Unicode.GetBytes(xml)))
             {
-                // Format the string to send inside the CustomEventArgs parameter
-                e.Message += String.Format(" at {0}", DateTime.Now.ToString());
+                XmlSerializer serializer = new XmlSerializer(typeof(mVersions));
+                return (mVersions)serializer.Deserialize(ms);
+            }
+        }
 
-                // Use the () operator to raise the event.
-                handler(this, e);
+        public static string SerializeObject<mVersions>(mVersions obj)
+        {
+            XmlSerializer xmlSerializer = new XmlSerializer(obj.GetType());
+
+            using (StringWriter textWriter = new StringWriter())
+            {
+                xmlSerializer.Serialize(textWriter, obj);
+                return textWriter.ToString();
+            }
+        }
+
+        public static mVersions Deserialize<mVersions>(string json)
+        {
+            using (MemoryStream ms = new MemoryStream(Encoding.Unicode.GetBytes(json)))
+            {
+                DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(mVersions));
+                return (mVersions)serializer.ReadObject(ms);
+            }
+        }
+
+        public static string Serialize<mVersions>(mVersions obj)
+        {
+            DataContractJsonSerializer serializer = new DataContractJsonSerializer(obj.GetType());
+            using (MemoryStream ms = new MemoryStream())
+            {
+                serializer.WriteObject(ms, obj);
+                return Encoding.Default.GetString(ms.ToArray());
             }
         }
     }
 
     // Define a class to hold custom event info
-    public class CustomEventArgs : EventArgs
+    public class ProgressStatusArgs : EventArgs
     {
-        public CustomEventArgs(string s)
+        public ProgressStatusArgs(string s, int i)
         {
             message = s;
+            count = i;
         }
         private string message;
-
         public string Message
         {
             get { return message; }
             set { message = value; }
         }
+        private int count;
+        public int Count
+        {
+            get { return count; }
+            set { count = value; }
+        }
     }
 
+    [System.Runtime.Serialization.DataContractAttribute()]
     internal class mVersions
     {
+        [System.Runtime.Serialization.DataMemberAttribute()]
+        internal mVersion[] Vesions { get; set; }
+}
+
+    [System.Runtime.Serialization.DataContractAttribute()]
+    internal class mVersion
+    {
+        [System.Runtime.Serialization.DataMemberAttribute()]
         internal string name { get; set; }
+        [System.Runtime.Serialization.DataMemberAttribute()]
         internal mBooks[] Books { get; set; }
     }
 
+    [System.Runtime.Serialization.DataContractAttribute()]
     internal class mBooks
     {
+        [System.Runtime.Serialization.DataMemberAttribute()]
         internal string Name { get; set; }
+        [System.Runtime.Serialization.DataMemberAttribute()]
         internal mChapters[] Chapters { get; set; }
     }
 
+    [System.Runtime.Serialization.DataContractAttribute()]
     internal class mChapters
     {
+        [System.Runtime.Serialization.DataMemberAttribute()]
         internal int Chapter { get; set; }
+        [System.Runtime.Serialization.DataMemberAttribute()]
         internal int Verses { get; set; }
     }
 
+    [System.Runtime.Serialization.DataContractAttribute()]
     internal class mVerses
     {
+        [System.Runtime.Serialization.DataMemberAttribute()]
         internal int Verse { get; set; }
+        [System.Runtime.Serialization.DataMemberAttribute()]
         internal string Contents { get; set; }
     }
 }

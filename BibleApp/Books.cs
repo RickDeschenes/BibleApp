@@ -23,7 +23,7 @@ namespace AnotherBibleApp
     internal partial class BibleBooks
     {
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal Books[] books;
+        internal Books[] books = new Books[0];
 
         internal List<string> lBooks;
         internal List<string> lChapters;
@@ -114,10 +114,10 @@ namespace AnotherBibleApp
     internal partial class Books: IEnumerable<Chapters>
     {
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal string passage;
+        internal string passage = "";
 
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal Chapters[] chapters;
+        internal Chapters[] chapters = new Chapters[0];
 
         public IEnumerator<Chapters> GetEnumerator()
         {

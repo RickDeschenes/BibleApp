@@ -6,60 +6,172 @@ using System.Linq;
 using System.Net;
 using System.Runtime.Serialization.Json;
 using System.Text;
-using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Serialization;
 
 namespace AnotherBibleApp
 {
-    public delegate void MyDelegate(string Message, int Count, int Max);
-    public delegate void MyCompleted();
+    internal delegate void MyDelegate(string Message, int Count, int Max);
+    internal delegate void MyCompleted();
 
     public class BibleDetails
     {
-        public event MyDelegate VersionUpdate;
-        public event MyDelegate BookUpdate;
-        public event MyDelegate ChapterUpdate;
+        internal event MyDelegate VersionUpdate;
+        internal event MyDelegate BookUpdate;
+        internal event MyDelegate ChapterUpdate;
 
-        public event MyCompleted Completed;
+        internal event MyCompleted Completed;
 
         private BibleBooks[] Bibles;
         private BibleBooks Books;
-        private mVersion _versions;
-        private mVersion[] Versions;
+        public mVersion _versions;
+        public mVersion[] Versions;
 
         private const string key = "key=adbcd6d6ae712cfe5e1657757b010c4c";
 
-        private List<string> lVersions;
+        internal List<string> lVersions;
         private List<string> lBooks;
         private List<string> lChapters;
+        internal List<string> lProcess;
 
-        public string TableofContentsXml { get; internal set; }
-        public string TableofContentsJson { get; internal set; }
+        internal string TableofContentsTxt { get; private set; }
+        internal string TableofContentsXml { get; private set; }
+        internal string TableofContentsJson { get; private set; }
+        public object Path { get; internal set; }
 
-        public BibleDetails()
+        internal BibleDetails()
         {
+            LoadBibles();
+        }
+
+        private void LoadBibles()
+        {
+            XmlDocument xDoc = new XmlDocument();
+
+            string xml = ReadXml("https://api.biblia.com/v1/bible/find.xml?" + key);
+
+            xDoc.LoadXml(xml);
+
+            XmlNodeList nds = xDoc.SelectNodes("//bibles");
+
+            List<string> bibles = new List<string>();
+            foreach (XmlNode nd in nds)
+            {
+                bibles.Add(nd.SelectSingleNode("bible").InnerText);
+            }
+            Bibles = new BibleBooks[bibles.Count];
+            lVersions = bibles;
         }
 
         internal void ProcessDetails()
         {
-            LoadBibles();
             LoadAllBibles();
             LoadTableofContentsXml();
+            LoadTableofContentsDelimited();
             LoadTableofContentsJson();
+            Completed();
+        }
+
+        private void LoadTableofContentsDelimited()
+        {
+            StringBuilder sb = new StringBuilder();
+
+            XmlDocument xdoc = new XmlDocument();
+
+            xdoc.LoadXml(TableofContentsXml);
+            xdoc.Save(Path + "TableofContents.xml");
+            // Top level mVersions
+            foreach (XmlNode tp in xdoc.ChildNodes)
+            {
+                // Named level Version
+                foreach (XmlNode v in tp.ChildNodes)
+                {
+                    string version = "";
+                    int books = 0;
+                    int vchapters = 0;
+                    int vverses = 0;
+                    //mVersion level
+                    foreach (XmlNode mv in v.ChildNodes)
+                    {
+                        int bchapters = 0;
+                        //Named levels (Name, Books)
+                        foreach (XmlNode cn in mv.ChildNodes)
+                        {
+                            //TODO: we need to make a look up for full name, Image, ect.
+                            if (cn.Name == "Name")
+                                version = cn.InnerText;
+                            else
+                            {
+                                //mBooks
+                                foreach (XmlNode b in cn.ChildNodes)
+                                {
+                                    string book = "";
+                                    int chapters = 0;
+                                    int verses = 0;
+                                    int bverses = 0;
+                                    //mBooks
+                                    foreach (XmlNode mb in b.ChildNodes)
+                                    {
+                                        if (mb.Name == "Name")
+                                            book = mb.InnerText;
+                                        else
+                                        {
+                                            //Chapters
+                                            foreach (XmlNode c in mb.ChildNodes)
+                                            {
+                                                string chapter = "";
+                                                //mChapters
+                                                foreach (XmlNode mc in c.ChildNodes)
+                                                {
+                                                    if (mc.Name == "Chapter")
+                                                    {
+                                                        chapter = mc.InnerText;
+                                                    }
+                                                    else
+                                                    {
+                                                        string output = string.Format("{0}:{1}:{2}:{3}", version, book, chapter, mc.InnerText);
+                                                        if (mc.InnerText == "0")
+                                                            Debug.Print(output);
+                                                        sb.AppendLine(output);
+                                                        verses = int.Parse(mc.InnerText);
+                                                        bverses += verses;
+                                                    }
+                                                }
+                                                chapters += 1;
+                                            }
+                                        }
+                                    }
+                                    sb.AppendLine(string.Format("{0}:{1}: Chapters {2}: Verses {3}", version, book, chapters, bverses));
+                                    bchapters += chapters;
+                                    vverses += bverses;
+                                    books += 1;
+                                }
+                            }
+                        }
+                        vchapters += bchapters;
+                    }
+                    sb.AppendLine(string.Format("{0}: Books {1}: Chapters {2}: Verses {3}\n", version, books, vchapters, vverses));
+                }
+            }
+            TableofContentsTxt = sb.ToString();
+            string path = Path + "ChaptersVerses.txt";
+            using (StreamWriter sr = new StreamWriter(path))
+            {
+                sr.WriteLine(sb.ToString());
+            }
         }
 
         private void LoadTableofContentsXml()
         {
             mVersions versions = new mVersions();
-            versions.Vesions = Versions;
+            versions.Versions = Versions;
             TableofContentsXml = SerializeObject(versions);
         }
 
         private void LoadTableofContentsJson()
         {
             mVersions versions = new mVersions();
-            versions.Vesions = Versions;
+            versions.Versions = Versions;
             TableofContentsJson = Serialize<mVersions>(versions);
         }
 
@@ -67,18 +179,17 @@ namespace AnotherBibleApp
         {
             int v = 0;
             Versions = new mVersion[lVersions.Count];
-            foreach (string version in lVersions)
+            foreach (string version in lProcess)
             {
                 //raise an event
-                VersionUpdate("Processing " + version + ": version " + v + " of " + lVersions.Count, v, lVersions.Count);
+                VersionUpdate("Processing " + version + ": version " + v + " of " + lProcess.Count, v, lVersions.Count);
                 _versions = new mVersion();
                 Bibles[v] = LoadBooks(version);
-                _versions.name = version;
+                _versions.Name = version;
                 Versions[v] = _versions;
                 Debug.Write(Versions[v].Books);
                 v += 1;
             }
-            Completed();
         }
 
         private void LoadChapters(string Version, BibleBooks bible)
@@ -99,8 +210,32 @@ namespace AnotherBibleApp
                     bk = book.Replace("Song of Solomon", "song");
                 else if (bk.StartsWith("Wisdom of Solomon"))
                     bk = book.Replace("Wisdom of Solomon", "wisdom");
+
+                string path = Path + "" + Version;
+                Directory.CreateDirectory(path);
+                path += "\\" + book + ".txt";
+
                 string getbook = "https://api.biblia.com/v1/bible/content/" + Version + ".txt?style=oneVersePerLineFullReference&passage=" + bk.Replace(" ", "") + "&" + key;
-                List<string> contents = ReadXml(getbook).Split("\r\n".ToCharArray(), StringSplitOptions.RemoveEmptyEntries).ToList<string>();
+
+                List<string> contents = new List<string>();
+
+                if (File.Exists(path))
+                {
+                    using (StreamReader sr = new StreamReader(path))
+                    {
+                        while (!sr.EndOfStream)
+                            contents.Add(sr.ReadLine());
+                    }
+                }
+                else
+                {
+                    contents = ReadXml(getbook).Split("\r\n".ToCharArray(), StringSplitOptions.RemoveEmptyEntries).ToList<string>();
+                    //Print it
+                    using (StreamWriter sr = new StreamWriter(path))
+                    {
+                        contents.ForEach(sr.WriteLine);
+                    }
+                }
 
                 //split it up
                 c = 0;
@@ -108,17 +243,17 @@ namespace AnotherBibleApp
                 {
                     //Count the new lines
                     int verses = contents.FindAll(s => s.StartsWith(chapter + ":")).Count;
+                    if (verses == 0)
+                        verses = contents.FindAll(s => s.StartsWith(chapter + " ")).Count;
                     //Debug.Print("Found {0} verses", verses.Length);
                     Chapters[c] = new mChapters();
-                    Chapters[c].Chapter = c;
+                    Chapters[c].Chapter = c + 1;
                     Chapters[c].Verses = verses;
                     c += 1;
 
                     //raise an event
                     ChapterUpdate("Processing " + chapter + ": chapter " + c + " of " + bible.lChapters.Count, c, bible.lChapters.Count);
-
                 }
-
                 _versions.Books[b] = new mBooks();
                 _versions.Books[b].Name = book;
                 _versions.Books[b].Chapters = Chapters;
@@ -140,30 +275,11 @@ namespace AnotherBibleApp
 
             lBooks = Books.lBooks;
             lChapters = Books.lChapters;
-            _versions.name = version;
+            _versions.Name = version;
             _versions.Books = new mBooks[Books.lBooks.Count];
             LoadChapters(version, Books);
             
             return Books;
-        }
-
-        private void LoadBibles()
-        {
-            XmlDocument xDoc = new XmlDocument();
-
-            string xml = ReadXml("https://api.biblia.com/v1/bible/find.xml?" + key);
-
-            xDoc.LoadXml(xml);
-
-            XmlNodeList nds = xDoc.SelectNodes("//bibles");
-
-            List<string> bibles = new List<string>();
-            foreach (XmlNode nd in nds)
-            {
-                bibles.Add(nd.SelectSingleNode("bible").InnerText);
-            }
-            Bibles = new BibleBooks[bibles.Count];
-            lVersions = bibles;
         }
 
         private int LoadPassage(string book, string passage)
@@ -231,7 +347,7 @@ namespace AnotherBibleApp
             return result;
         }
 
-        public static mVersions DeserializeObject<mVersions>(string xml)
+        internal static mVersions DeserializeObject<mVersions>(string xml)
         {
             using (MemoryStream ms = new MemoryStream(Encoding.Unicode.GetBytes(xml)))
             {
@@ -240,7 +356,7 @@ namespace AnotherBibleApp
             }
         }
 
-        public static string SerializeObject<mVersions>(mVersions obj)
+        internal static string SerializeObject<mVersions>(mVersions obj)
         {
             XmlSerializer xmlSerializer = new XmlSerializer(obj.GetType());
 
@@ -251,7 +367,7 @@ namespace AnotherBibleApp
             }
         }
 
-        public static mVersions Deserialize<mVersions>(string json)
+        internal static mVersions Deserialize<mVersions>(string json)
         {
             using (MemoryStream ms = new MemoryStream(Encoding.Unicode.GetBytes(json)))
             {
@@ -260,7 +376,7 @@ namespace AnotherBibleApp
             }
         }
 
-        public static string Serialize<mVersions>(mVersions obj)
+        internal static string Serialize<mVersions>(mVersions obj)
         {
             DataContractJsonSerializer serializer = new DataContractJsonSerializer(obj.GetType());
             using (MemoryStream ms = new MemoryStream())
@@ -272,21 +388,21 @@ namespace AnotherBibleApp
     }
 
     // Define a class to hold custom event info
-    public class ProgressStatusArgs : EventArgs
+    internal class ProgressStatusArgs : EventArgs
     {
-        public ProgressStatusArgs(string s, int i)
+        internal ProgressStatusArgs(string s, int i)
         {
             message = s;
             count = i;
         }
         private string message;
-        public string Message
+        internal string Message
         {
             get { return message; }
             set { message = value; }
         }
         private int count;
-        public int Count
+        internal int Count
         {
             get { return count; }
             set { count = value; }
@@ -294,45 +410,45 @@ namespace AnotherBibleApp
     }
 
     [System.Runtime.Serialization.DataContractAttribute()]
-    internal class mVersions
+    public class mVersions
     {
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal mVersion[] Vesions { get; set; }
+        public mVersion[] Versions { get; set; }
 }
 
     [System.Runtime.Serialization.DataContractAttribute()]
-    internal class mVersion
+    public class mVersion
     {
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal string name { get; set; }
+        public string Name { get; set; }
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal mBooks[] Books { get; set; }
+        public mBooks[] Books { get; set; }
     }
 
     [System.Runtime.Serialization.DataContractAttribute()]
-    internal class mBooks
+    public class mBooks
     {
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal string Name { get; set; }
+        public string Name { get; set; }
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal mChapters[] Chapters { get; set; }
+        public mChapters[] Chapters { get; set; }
     }
 
     [System.Runtime.Serialization.DataContractAttribute()]
-    internal class mChapters
+    public class mChapters
     {
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal int Chapter { get; set; }
+        public int Chapter { get; set; }
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal int Verses { get; set; }
+        public int Verses { get; set; }
     }
 
     [System.Runtime.Serialization.DataContractAttribute()]
-    internal class mVerses
+    public class mVerses
     {
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal int Verse { get; set; }
+        public int Verse { get; set; }
         [System.Runtime.Serialization.DataMemberAttribute()]
-        internal string Contents { get; set; }
+        public string Contents { get; set; }
     }
 }
